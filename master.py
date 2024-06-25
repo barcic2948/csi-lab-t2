@@ -42,6 +42,7 @@ class ModbusMaster:
         self.timeout = 1.0
         self.retransmissions = 3
         self.transaction_timeout = 5.0
+        self.character_timeout = 0.01
 
     def set_parameters(self, baudrate, bytesize, parity, stopbits):
         self.port.baudrate = baudrate
@@ -86,12 +87,22 @@ class ModbusMaster:
 
     def receive_response(self):
         self.port.timeout = self.transaction_timeout
-        response = self.port.read_until(b'\n' if self.mode == ASCII_MODE else b'')
+        response = self.read_with_timeout()
         print(f"Master received response: {response}")
         if self.mode == ASCII_MODE:
             return self.validate_ascii_frame(response)
         else:
             return self.validate_rtu_frame(response)
+
+    def read_with_timeout(self):
+        response = bytearray()
+        while True:
+            char = self.port.read(1)
+            if not char:
+                break
+            response += char
+            self.port.timeout = self.character_timeout  # Set timeout for next character
+        return response
 
     def validate_ascii_frame(self, frame):
         if frame.startswith(b':') and frame.endswith(b'\r\n'):
@@ -101,14 +112,15 @@ class ModbusMaster:
             binary_data = binascii.unhexlify(data)
             calculated_lrc = calculate_lrc(binary_data)
             
-            print("===============Processing Response===============")
+            print("===============Processing Message================")
             print(f"Data with LRC: {data_with_lrc}")
             print(f"Data: {data}")
             print(f"LRC: {lrc}")
             print(f"Binary data: {binary_data}")
-            print(f"calculated lrc: {calculated_lrc}")
+            print(f"Calulcate lrc: {calculated_lrc}")
 
             if calculated_lrc == lrc:
+                print("Matching lrc values")
                 self.presentResponse(binary_data[2:])
                 return True
             else:
@@ -120,8 +132,19 @@ class ModbusMaster:
     def validate_rtu_frame(self, frame):
         if len(frame) >= 5:
             data, crc_received = frame[:-2], frame[-2:]
-            if calculate_crc(data) == crc_received:
+            print("===============Processing Message================")
+            print(f"Frame: {frame}")
+            print(f"Data: {data}")
+            print(f"CRC: {bytes(crc_received)}")
+            print(f"Calulcate Crc: {calculate_crc(data)}")
+            if calculate_crc(data) == bytes(crc_received):
+                print("Matching crc values")
+                self.presentResponse(data[2:])
                 return True
+            else:
+                self.presentExcpetion("Bad crc")
+                return False
+        self.presentExcpetion("Bad frame")
         return False
     
     def presentResponse(self, text):
@@ -144,7 +167,7 @@ def send_message():
 
 if __name__ == "__main__":
     master_port = 'COM5'
-    master = ModbusMaster(port=master_port, mode=ASCII_MODE)
+    master = ModbusMaster(port=master_port, mode=RTU_MODE)
     master.set_parameters(baudrate=9600, bytesize=8, parity='N', stopbits=1)
     
     root = tk.Tk()
